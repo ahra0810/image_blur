@@ -1,6 +1,5 @@
 import streamlit as st
 import cv2
-import mediapipe as mp
 import numpy as np
 from PIL import Image
 from io import BytesIO
@@ -10,7 +9,11 @@ st.set_page_config(page_title="Face Blur App", layout="centered")
 st.title("얼굴 자동 블러 처리기")
 st.write("사진을 업로드하면 얼굴을 인식해서 자동으로 블러 처리해 줍니다.")
 
-mp_face_detection = mp.solutions.face_detection
+# OpenCV의 Haar Cascade 얼굴 검출기 로드
+# opencv-python(-headless)에 함께 들어 있는 모델 파일을 사용
+FACE_CASCADE = cv2.CascadeClassifier(
+    cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
+)
 
 
 def blur_faces_bgr(image_bgr: np.ndarray, blur_ksize: int = 31):
@@ -22,40 +25,29 @@ def blur_faces_bgr(image_bgr: np.ndarray, blur_ksize: int = 31):
     if blur_ksize % 2 == 0:
         blur_ksize += 1  # 가우시안 커널은 홀수여야 함
 
-    img_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-    h, w, _ = img_rgb.shape
+    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+
+    # 얼굴 검출
+    faces = FACE_CASCADE.detectMultiScale(
+        gray,
+        scaleFactor=1.3,
+        minNeighbors=5,
+        minSize=(30, 30),
+    )
 
     detections_count = 0
 
-    with mp_face_detection.FaceDetection(
-        model_selection=0, min_detection_confidence=0.5
-    ) as face_detection:
-        results = face_detection.process(img_rgb)
+    for (x, y, w, h) in faces:
+        x_min, y_min = x, y
+        x_max, y_max = x + w, y + h
 
-        if not results.detections:
-            return image_bgr, 0
+        face_roi = image_bgr[y_min:y_max, x_min:x_max]
+        if face_roi.size == 0:
+            continue
 
-        for detection in results.detections:
-            bbox = detection.location_data.relative_bounding_box
-
-            x_min = int(max(bbox.xmin * w, 0))
-            y_min = int(max(bbox.ymin * h, 0))
-            x_max = int(min((bbox.xmin + bbox.width) * w, w))
-            y_max = int(min((bbox.ymin + bbox.height) * h, h))
-
-            # ROI 범위 체크
-            if x_max <= x_min or y_max <= y_min:
-                continue
-
-            face_roi = image_bgr[y_min:y_max, x_min:x_max]
-            if face_roi.size == 0:
-                continue
-
-            blurred_roi = cv2.GaussianBlur(
-                face_roi, (blur_ksize, blur_ksize), 0
-            )
-            image_bgr[y_min:y_max, x_min:x_max] = blurred_roi
-            detections_count += 1
+        blurred_roi = cv2.GaussianBlur(face_roi, (blur_ksize, blur_ksize), 0)
+        image_bgr[y_min:y_max, x_min:x_max] = blurred_roi
+        detections_count += 1
 
     return image_bgr, detections_count
 
@@ -108,5 +100,5 @@ if uploaded_file is not None:
                 mime="image/png",
             )
 
-elif uploaded_file is None:
+else:
     st.info("위의 버튼을 눌러 이미지를 업로드하세요.")
